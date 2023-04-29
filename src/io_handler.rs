@@ -4,6 +4,7 @@ use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::{io, thread};
 use std::thread::JoinHandle;
+use std::fmt::Write;
 
 pub struct ServerIOHandler {
     // This is the value that will be sent as the console to the server.
@@ -42,6 +43,7 @@ impl ServerIOHandler {
 
     pub fn handle_output(&mut self) {
         while let Ok(receive) = self.stdout_receiver.try_recv() {
+            write!(self.total_string, "{}", receive).unwrap();
             print!("{receive}");
         }
     }

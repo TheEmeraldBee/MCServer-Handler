@@ -1,6 +1,12 @@
 use std::process::{Command, Stdio};
-use std::{env, thread};
+use std::{fs, thread};
+use std::fs::File;
+use std::io::{BufRead, BufReader, Write};
+use serde_json::{json, Map, Value as Json};
+use std::net::TcpListener;
+use std::sync::mpsc;
 use std::time::Duration;
+use handlebars::{Handlebars, to_json};
 use crate::command_watcher::CommandWatcher;
 use crate::io_handler::ServerIOHandler;
 
@@ -9,7 +15,24 @@ pub mod io_handler;
 
 fn main() {
 
+    let (tcp_sender, tcp_receiver) = mpsc::channel();
+
     // Init the server here.
+    thread::spawn(move || {
+        let listener = TcpListener::bind("127.0.0.1:7878").unwrap();
+
+        for stream in listener.incoming() {
+            let stream = stream.unwrap();
+
+            tcp_sender.send(stream).unwrap();
+        }
+    });
+
+    let mut handlebars = Handlebars::new();
+
+    handlebars
+        .register_template_file("template", "./index.hbs")
+        .unwrap();
 
     'server: loop {
         // Create and start our server.sh file.
@@ -50,6 +73,25 @@ fn main() {
             if let Some(code) = command_watcher.check_complete() {
                 println!("Command exited with code {code}");
                 break 'command;
+            }
+
+            // Catch the TCP Connection
+            while let Ok(mut stream) = tcp_receiver.try_recv() {
+                let buf_reader = BufReader::new(&mut stream);
+                let http_request: Vec<_> = buf_reader
+                    .lines()
+                    .map(|result| result.unwrap())
+                    .take_while(|line| !line.is_empty())
+                    .collect();
+
+                let status_line = "HTTP/1.1 200 OK";
+                let contents = handlebars.render("template", &json!({"log_output": &stdio_handler.total_string})).unwrap();
+                let length = contents.len();
+
+                let response =
+                    format!("{status_line}\r\nContent-Length: {length}\r\n\r\n{contents}");
+
+                stream.write_all(response.as_bytes()).unwrap();
             }
         }
 
