@@ -1,12 +1,11 @@
 use std::process::{Command, Stdio};
-use std::{fs, thread};
-use std::fs::File;
-use std::io::{BufRead, BufReader, Write};
-use serde_json::{json, Map, Value as Json};
+use std::{thread};
+use std::io::{BufRead, BufReader, Read, Write};
+use serde_json::{json, Map};
 use std::net::TcpListener;
 use std::sync::mpsc;
 use std::time::Duration;
-use handlebars::{Handlebars, to_json};
+use handlebars::{Handlebars};
 use crate::command_watcher::CommandWatcher;
 use crate::io_handler::ServerIOHandler;
 
@@ -78,11 +77,25 @@ fn main() {
             // Catch the TCP Connection
             while let Ok(mut stream) = tcp_receiver.try_recv() {
                 let buf_reader = BufReader::new(&mut stream);
-                let http_request: Vec<_> = buf_reader
+                let mut http_request: Vec<_> = buf_reader
                     .lines()
                     .map(|result| result.unwrap())
                     .take_while(|line| !line.is_empty())
                     .collect();
+
+                let request = http_request[0].clone();
+                http_request.remove(0);
+
+                let mut data_map = Map::new();
+                for request in &http_request {
+                    let split: Vec<_> = request.trim().split(": ").collect();
+
+                    data_map.insert(split[0].to_string().clone(), json!(split[1].to_string().clone()));
+                }
+
+                println!("{:?}", http_request);
+
+                println!("{}", data_map["Host"]);
 
                 let status_line = "HTTP/1.1 200 OK";
                 let contents = handlebars.render("template", &json!({"log_output": &stdio_handler.total_string})).unwrap();
