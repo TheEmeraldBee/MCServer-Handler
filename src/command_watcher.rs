@@ -24,6 +24,9 @@ impl CommandWatcher {
             return Ok(());
         }
 
-        self.command.stdin.as_mut().unwrap().write_all(write.as_bytes())
+        self.command.stdin.as_mut().unwrap().write_all(write.as_bytes())?;
+        self.command.stdin.as_mut().unwrap().flush().unwrap();
+
+        return Ok(())
     }
 }

@@ -2,18 +2,71 @@
 <html lang="en">
 <head>
     <meta charset="utf-8">
-    <title>Hello!</title>
+    <title>Minecraft Server Handler</title>
     <style>
+        body {
+            background: #1F1E20;
+            color: white;
+            text-align: left;
+        }
         code {
-            background-color: #292929;
+            text-align: left;
+            overflow: auto;
             white-space: pre-line;
-            color: gray;
+            color: #8FA179;
+        }
+        input {
+            margin-bottom: 15px;
+            text-align: left;
+            width: 100%;
+            border: #282F28;
+            color: #8FA179;
+            background-color: #28272a;
+        }
+        a {
+            color: lightblue;
         }
     </style>
 </head>
 <body>
-<h1>Hello!</h1>
-<p>Hi from Rust</p>
-<code>{{log_output}}</code>
+<h1>Welcome, {{user}}!</h1>
+<a href="/logout">Logout</a>
+<br>
+<br>
+<code id="console"></code>
+<form method="post" enctype="text/plain">
+    <label>
+        <input type="text" name="command">
+    </label>
+</form>
+<script>
+    async function subscribe() {
+        let response = await fetch("/data");
+
+        if (response.status === 502) {
+            // Status 502 is a connection timeout error,
+            // may happen when the connection was pending for too long,
+            // and the remote server or a proxy closed it
+            // let's reconnect
+            await subscribe();
+        } else if (response.status !== 200) {
+            // An error - let's show it
+            let container = document.getElementById("console");
+            container.innerText = response.statusText;
+            // Reconnect in one second
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            await subscribe();
+        } else {
+            // Get and show the message
+            let container = document.getElementById("console");
+            container.innerText = await response.text();
+            // Call subscribe() again to get the next message
+            await new Promise(resolve => setTimeout(resolve, 500));
+            await subscribe();
+        }
+    }
+
+    subscribe();
+</script>
 </body>
 </html>
