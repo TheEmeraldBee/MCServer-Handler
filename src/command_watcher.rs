@@ -19,7 +19,8 @@ impl CommandWatcher {
         None
     }
 
-    pub fn send_string(&mut self, write: String) -> std::io::Result<()> {
+    pub fn send_string(&mut self, mut write: String) -> std::io::Result<()> {
+        write.push('\n');
         if self.check_complete().is_some() {
             return Ok(());
         }

@@ -1,1 +1,5 @@
 /target
+/server
+mcserver-handler.toml
+cert.pem
+key.pem

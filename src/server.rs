@@ -1,16 +1,24 @@
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use serde_json::{json, Map, Value};
 use std::net::{TcpListener, TcpStream};
-use std::sync::mpsc;
+use std::sync::{Arc, mpsc};
 use std::sync::mpsc::Receiver;
 use std::thread;
+use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod, SslStream};
 
 pub struct Server {
     pub tcp_receiver: Receiver<TcpStream>,
+    pub acceptor: Arc<SslAcceptor>
 }
 
 impl Server {
-    pub fn new(threads: u32, addr: String) -> Self {
+    pub fn new(threads: u32, addr: &str) -> Self {
+        let mut acceptor = SslAcceptor::mozilla_intermediate(SslMethod::tls()).unwrap();
+        acceptor.set_private_key_file("key.pem", SslFiletype::PEM).unwrap();
+        acceptor.set_certificate_chain_file("cert.pem").unwrap();
+        acceptor.check_private_key().unwrap();
+        let acceptor = Arc::new(acceptor.build());
+
         // Init the MPSC sender and receiver.
         let (sender, receiver) = mpsc::channel();
 
@@ -23,7 +31,6 @@ impl Server {
             let tcp_sender = sender.clone();
             // Init the server here.
             thread::spawn(move || {
-
                 for stream in tcp_listener.incoming() {
                     let stream = stream.unwrap();
 
@@ -35,7 +42,8 @@ impl Server {
 
         // Return the server handler.
         Self {
-            tcp_receiver: receiver
+            tcp_receiver: receiver,
+            acceptor
         }
 
     }
@@ -52,20 +60,29 @@ impl Server {
 }
 
 pub struct ServerStream {
-    pub tcp_stream: TcpStream,
+    pub tcp_stream: SslStream<TcpStream>,
     pub request: String,
     headers: Map<String, Value>,
-    cookies: Map<String, Value>
+    cookies: Map<String, Value>,
+    content: Map<String, Value>
 }
 
-pub fn parse_stream(mut stream: TcpStream) -> ServerStream {
+pub fn parse_stream(stream: TcpStream, server: &Server) -> Result<ServerStream, String> {
+    let mut stream = match server.acceptor.accept(stream) {
+        Ok(str) => str,
+        Err(err) => return Err(err.to_string())
+    };
+
     let mut buf_reader = BufReader::new(&mut stream);
 
     let mut http_request = vec![];
     let mut header_line = "".to_string();
 
     loop {
-        buf_reader.read_line(&mut header_line).unwrap();
+        match buf_reader.read_line(&mut header_line) {
+            Ok(_) => {},
+            Err(err) => { return Err(err.to_string()); }
+        };
 
         // The final line is just /r/n
         if header_line.len() == 2 {
@@ -101,12 +118,33 @@ pub fn parse_stream(mut stream: TcpStream) -> ServerStream {
         }
     }
 
-    ServerStream {
+    // Try to get the content
+    let mut content = Map::new();
+
+    if let Some(content_length) = headers.get("Content-Length") {
+        let content_length = content_length.as_str().unwrap().parse::<usize>().unwrap();
+
+        let mut read_buf = vec![0u8; content_length];
+        buf_reader.read_exact(&mut read_buf).unwrap();
+
+        let body = String::from_utf8(read_buf.to_vec()).unwrap();
+
+        let split_body: Vec<_> = body.trim().split("\r\n").collect();
+
+        for piece in split_body {
+            let pieces: (&str, &str) = piece.split_once("=").unwrap();
+
+            content.insert(pieces.0.to_string(), json!(pieces.1.to_string()));
+        }
+    }
+
+    Ok(ServerStream {
         tcp_stream: stream,
         request,
         headers,
-        cookies
-    }
+        cookies,
+        content
+    })
 }
 
 impl ServerStream {
@@ -114,8 +152,8 @@ impl ServerStream {
         self.request.clone()
     }
 
-    pub fn get_header(&self, key: String) -> Option<String> {
-        if let Some(value) = self.headers.get(&key) {
+    pub fn get_header(&self, key: &str) -> Option<String> {
+        if let Some(value) = self.headers.get(key) {
             if let Some(str_value) = value.as_str() {
                 return Some(str_value.to_string());
             }
@@ -123,8 +161,8 @@ impl ServerStream {
         None
     }
 
-    pub fn get_cookie(&self, key: String) -> Option<String> {
-        if let Some(value) = self.cookies.get(&key) {
+    pub fn get_cookie(&self, key: &str) -> Option<String> {
+        if let Some(value) = self.cookies.get(key) {
             if let Some(str_value) = value.as_str() {
                 return Some(str_value.to_string());
             }
@@ -132,7 +170,16 @@ impl ServerStream {
         None
     }
 
-    pub fn write_request(mut self, status_line: String, contents: String, headers: Vec<String>) {
+    pub fn get_content(&self, key: &str) -> Option<String> {
+        if let Some(value) = self.content.get(key) {
+            if let Some(str_value) = value.as_str() {
+                return Some(str_value.to_string());
+            }
+        }
+        None
+    }
+
+    pub fn write_request(mut self, status_line: &str, contents: &str, headers: Vec<&str>) {
         let mut response = String::new();
 
         // Build the headers
