@@ -6,6 +6,7 @@
       <excludeFolder url="file://$MODULE_DIR$/target" />
       <excludeFolder url="file://$MODULE_DIR$/server/world/datapacks" />
       <excludeFolder url="file://$MODULE_DIR$/server/world/playerdata" />
+      <excludeFolder url="file://$MODULE_DIR$/mcserver-handler-release" />
     </content>
     <orderEntry type="inheritedJdk" />
     <orderEntry type="sourceFolder" forTests="false" />
