@@ -1,3 +1,6 @@
+# Recommended
+It is recommended to use an MCServerStopper Plugin/Mod to save the earth, and so that this isn't entirely useless :)
+
 # Installation
 
 ---
