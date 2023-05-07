@@ -34,13 +34,18 @@ impl Server {
                 for stream in tcp_listener.incoming() {
                     let stream = stream.unwrap();
 
-                    // TODO: Handle when the server is closed.
-                    tcp_sender.send(stream).unwrap();
+                    // Attempt to send the tcp_stream to the main thread
+                    match tcp_sender.send(stream) {
+                        Ok(_) => {}
+                        // Ignore the error here because the server is most
+                        // likely closed.
+                        Err(_) => { break; }
+                    }
                 }
             });
         }
 
-        // Return the server handler.
+        // Return the server after everything is done running.
         Self {
             tcp_receiver: receiver,
             acceptor
@@ -68,9 +73,9 @@ pub struct ServerStream {
 }
 
 pub fn parse_stream(stream: TcpStream, server: &Server) -> Result<ServerStream, String> {
-    let mut stream = match server.acceptor.accept(stream) {
+    let mut stream = match server.acceptor.accept(stream.try_clone().unwrap()) {
         Ok(str) => str,
-        Err(err) => return Err(err.to_string())
+        Err(err) => { return Err(err.to_string()); }
     };
 
     let mut buf_reader = BufReader::new(&mut stream);

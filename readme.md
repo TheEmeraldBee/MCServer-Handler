@@ -11,12 +11,26 @@ You have to use a .sh file or it won't work.
 
 ### Example Config
 ```toml
-main_user="User1"
-main_pass="iamallmighty"
-start_user="startserver"
-start_pass="thereisnoserver"
+# The main user that can access the server console.
+main_user="Admin"
+main_pass="dontkeepthisyes?"
 
+# The user that can start the server from a sleeping state.
+start_user="StartServer"
+start_pass="start_server10257"
+
+# The path to the sh file that will run your server.
 run_path="./run.sh"
+
+# The host that the server will be on.
+# Format: (IP:PORT)
+host_ip="127.0.0.1:7878"
+
+# The number of threads that will catch the https connections
+receive_threads=4
+
+# The maximum number of lines that will be sent to the server.
+max_lines_shown=200
 ```
 
 ## HTTPS Requirements

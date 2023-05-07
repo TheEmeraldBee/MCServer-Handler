@@ -59,14 +59,14 @@
             let container = document.getElementById("console");
             container.innerText = response.statusText;
             // Reconnect in one second
-            await new Promise(resolve => setTimeout(resolve, 1000));
+            await new Promise(resolve => setTimeout(resolve, 3000));
             await poll();
         } else {
             // Get and show the message
             let container = document.getElementById("console");
             container.innerText = await response.text();
             // Call subscribe() again to get the next message
-            await new Promise(resolve => setTimeout(resolve, 500));
+            await new Promise(resolve => setTimeout(resolve, 2000));
             await poll();
         }
     }

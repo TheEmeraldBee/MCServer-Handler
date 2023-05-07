@@ -8,6 +8,8 @@ use crate::io_handler::ServerIOHandler;
 use crate::server::{parse_stream, Server};
 use serde::Deserialize;
 
+use rand::Rng;
+
 pub mod command_watcher;
 pub mod io_handler;
 pub mod server;
@@ -18,10 +20,17 @@ pub struct Config {
     pub main_pass: String,
     pub start_user: String,
     pub start_pass: String,
-    pub run_path: String
+    pub run_path: String,
+    pub host_ip: String,
+    pub receive_threads: u32,
+    pub max_lines_shown: usize
 }
 
 fn main() {
+    // Generate a random number as a session value.
+    let mut session_gen = rand::thread_rng();
+
+    let mut connected_sessions: Vec<String> = vec![];
 
     let config_file = match fs::read_to_string("mcserver-handler.toml") {
         Ok(file) => file,
@@ -34,7 +43,7 @@ fn main() {
     let start_user = config.start_user;
     let start_pass = config.start_pass;
 
-    let mut server = Server::new(4, "127.0.0.1:443");
+    let mut server = Server::new(config.receive_threads, &config.host_ip);
 
     let mut handlebars = Handlebars::new();
 
@@ -63,7 +72,7 @@ fn main() {
             .unwrap();
 
         // First build our STDIO Handler that will handle input and console output.
-        let mut stdio_handler = ServerIOHandler::new(command.stdout.take().unwrap());
+        let mut stdio_handler = ServerIOHandler::new(command.stdout.take().unwrap(), config.max_lines_shown);
 
         // Finally Build Our Watcher for the command that will watch the system.
         let mut command_watcher = CommandWatcher::new(command);
@@ -80,7 +89,6 @@ fn main() {
             // This will print the console of the command to our stdout.
             stdio_handler.handle_output();
 
-            // TODO: Implement Custom Commands
             for input in &inputs {
                 match command_watcher.send_string(input.clone()) {
                     Ok(_) => {},
@@ -104,7 +112,7 @@ fn main() {
                 match request.get_request().as_str() {
                     "POST /console HTTP/1.1" => {
                         // Check for logged in
-                        if request.get_cookie("login") == Some("129248921".to_string()) {
+                        if connected_sessions.contains(&request.get_cookie("login").unwrap_or("".to_string())) {
                             // They are logged in, so run the command and return a move to the GET /console
                             if let Some(command) = request.get_content("command") {
                                 command_watcher.send_string(command).unwrap();
@@ -119,7 +127,7 @@ fn main() {
                     }
                     "GET /console HTTP/1.1" => {
                         // Check for logged in
-                        if request.get_cookie("login") == Some("129248921".to_string()) {
+                        if connected_sessions.contains(&request.get_cookie("login").unwrap_or("".to_string())) {
                             // They are logged in, so send them the console page.
                             let contents = handlebars.render("template",
                                                              &json!({"log_output": &stdio_handler.total_string, "user": main_user})).unwrap();
@@ -132,7 +140,7 @@ fn main() {
                     }
                     "GET / HTTP/1.1" => {
                         // Check for logged in
-                        if request.get_cookie("login") == Some("129248921".to_string()) {
+                        if connected_sessions.contains(&request.get_cookie("login").unwrap_or("".to_string())) {
                             request.write_request("HTTP/1.1 303 See Other", "", vec!["Location: /console"])
                         } else {
                             let contents = handlebars.render("login", &json!({"login_error": "Server Status: Online"})).unwrap();
@@ -145,11 +153,14 @@ fn main() {
                         let password = if let Some(password) = request.get_content("password") { password } else { "".to_string() };
 
                         if username == main_user && password == main_pass {
+                            // Generate a unique login token
+                            let login_token = session_gen.gen::<u32>();
+                            connected_sessions.push(login_token.to_string());
+
                             // They should be logged in now.
                             request.write_request("HTTP/1.1 303 See Other",
                                                   "",
-                                                  vec!["Location: /console", "Set-Cookie: login=129248921; SameSite=Strict; Max-Age=86400"]
-                            );
+                                                  vec!["Location: /console", &format!("Set-Cookie: login={}; SameSite=Strict; Max-Age=86400", login_token)]);
                         }
                         else if username == start_user && password == start_pass {
                             // Someone wants to start the server, but it is already running.
@@ -163,9 +174,9 @@ fn main() {
                     }
                     "GET /data HTTP/1.1" => {
                         // Check for logged in
-                        if request.get_cookie("login") == Some("129248921".to_string()) {
+                        if connected_sessions.contains(&request.get_cookie("login").unwrap_or("".to_string())) {
                             let contents = stdio_handler.total_string.clone();
-                            request.write_request("HTTP/1.1 200 OK", &contents, vec![])
+                            request.write_request("HTTP/1.1 200 OK", &contents.join("\n"), vec![])
                         } else {
                             let contents = "User not logged in.";
                             request.write_request("HTTP/1.1 200 OK", contents, vec![])
@@ -173,6 +184,11 @@ fn main() {
                     }
                     "GET /logout HTTP/1.1" => {
                         // They should be logged out now.
+
+                        // Remove their session from the system
+                        connected_sessions.retain(|x| x != &request.get_content("login").unwrap_or("".to_string()));
+
+                        // Remove their login cookie, and return them to the login page.
                         request.write_request("HTTP/1.1 303 See Other",
                                               "",
                                               vec!["Location: /", "Set-Cookie: login=0; SameSite=Strict; Max-Age=-1"]
@@ -181,7 +197,7 @@ fn main() {
                     "GET /stop HTTP/1.1" => {
                         // Ensure Login, and if so, stop the server
                         // Check for logged in
-                        if request.get_cookie("login") == Some("129248921".to_string()) {
+                        if connected_sessions.contains(&request.get_cookie("login").unwrap_or("".to_string())) {
                             // Stop the server.
                             command_watcher.send_string("stop".to_string()).unwrap();
 
@@ -198,7 +214,7 @@ fn main() {
                         // Ensure Login, and if so, kill the server
                         // Ensure Login, and if so, stop the server
                         // Check for logged in
-                        if request.get_cookie("login") == Some("129248921".to_string()) {
+                        if connected_sessions.contains(&request.get_cookie("login").unwrap_or("".to_string())) {
                             // Stop the server.
                             command_watcher.send_string("stop".to_string()).unwrap();
 
@@ -236,7 +252,7 @@ fn main() {
                 match request.get_request().as_str() {
                     "GET /console HTTP/1.1" => {
                         // Check for logged in
-                        if request.get_cookie("login") == Some("129248921".to_string()) {
+                        if connected_sessions.contains(&request.get_cookie("login").unwrap_or("".to_string())) {
                             // They are logged in, so send them the console page.
                             let contents = handlebars.render("offline", &json!({})).unwrap();
                             request.write_request("HTTP/1.1 200 OK", &contents, vec![]);
@@ -248,7 +264,7 @@ fn main() {
                     }
                     "GET / HTTP/1.1" => {
                         // Send them the login page
-                        if request.get_cookie("login") == Some("129248921".to_string()) {
+                        if connected_sessions.contains(&request.get_cookie("login").unwrap_or("".to_string())) {
                             request.write_request("HTTP/1.1 303 See Other", "", vec!["Location: /console"])
                         } else {
                             let contents = handlebars.render("login", &json!({"login_error": "Server Status: Offline"})).unwrap();
@@ -261,10 +277,14 @@ fn main() {
                         let password = if let Some(password) = request.get_content("password") { password } else { "".to_string() };
 
                         if username == main_user && password == main_pass {
+                            // Generate a unique login token
+                            let login_token = session_gen.gen::<u32>();
+                            connected_sessions.push(login_token.to_string());
+
                             // They should be logged in now.
                             request.write_request("HTTP/1.1 303 See Other",
                                                   "",
-                                                  vec!["Location: /console", "Set-Cookie: login=129248921; SameSite=Strict; Max-Age=86400"]
+                                                  vec!["Location: /console", &format!("Set-Cookie: login={}; SameSite=Strict; Max-Age=86400", login_token)]
                             );
                         }
                         else if username == start_user && password == start_pass {
@@ -282,7 +302,7 @@ fn main() {
                         // Ensure Login, and if so, kill the server
                         // Ensure Login, and if so, stop the server
                         // Check for logged in
-                        if request.get_cookie("login") == Some("129248921".to_string()) {
+                        if connected_sessions.contains(&request.get_cookie("login").unwrap_or("".to_string())) {
                             request.write_request("HTTP/1.1 303 See Other", "", vec!["Location: /console"]);
 
                             // Now kill the webserver too.
@@ -294,7 +314,7 @@ fn main() {
                         }
                     }
                     "GET /start HTTP/1.1" => {
-                        if request.get_cookie("login") == Some("129248921".to_string()) {
+                        if connected_sessions.contains(&request.get_cookie("login").unwrap_or("".to_string())) {
                             request.write_request("HTTP/1.1 303 See Other", "", vec!["Location: /console"]);
                             break 'idle;
                         } else {
@@ -303,13 +323,18 @@ fn main() {
                     }
                     "GET /logout HTTP/1.1" => {
                         // They should be logged out now.
+
+                        // Remove their session from the system
+                        connected_sessions.retain(|x| x != &request.get_content("login").unwrap_or("".to_string()));
+
+                        // Remove their login cookie, and return them to the login page.
                         request.write_request("HTTP/1.1 303 See Other",
                                               "",
                                               vec!["Location: /", "Set-Cookie: login=0; SameSite=Strict; Max-Age=-1"]
                         );
                     }
                     "GET /data HTTP/1.1" => {
-                        if request.get_cookie("login") == Some("129248921".to_string()) {
+                        if connected_sessions.contains(&request.get_cookie("login").unwrap_or("".to_string())) {
                             request.write_request("HTTP/1.1 200 OK", "Server Offline", vec![]);
                         } else {
                             request.write_request("HTTP/1.1 303 See Other", "", vec!["Location: /"]);
